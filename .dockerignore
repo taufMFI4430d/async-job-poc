@@ -1,0 +1,16 @@
+.git
+.gitignore
+
+.env
+.env.*
+!.env.example
+
+bin/
+tmp/
+coverage/
+*.out
+*.test
+
+.DS_Store
+.idea/
+.vscode/
