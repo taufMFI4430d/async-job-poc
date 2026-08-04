@@ -8,12 +8,22 @@ import (
 	"syscall"
 
 	httpadapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/http"
+	httphandler "github.com/taufMFI4430d/async-job-poc/internal/adapters/http/handler"
+	mysqladapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/mysql"
+	"github.com/taufMFI4430d/async-job-poc/internal/application/usecase"
+	"github.com/taufMFI4430d/async-job-poc/internal/platform/clock"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/config"
+	"github.com/taufMFI4430d/async-job-poc/internal/platform/database"
+	"github.com/taufMFI4430d/async-job-poc/internal/platform/idgen"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/server"
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	bootstrapLogger := slog.New(
 		slog.NewJSONHandler(os.Stderr, nil),
 	)
@@ -24,7 +34,7 @@ func main() {
 			"failed to load application configuration",
 			slog.Any("error", err),
 		)
-		os.Exit(1)
+		return 1
 	}
 
 	logger, err := logging.New(
@@ -40,7 +50,7 @@ func main() {
 			"failed to initialize application logger",
 			slog.Any("error", err),
 		)
-		os.Exit(1)
+		return 1
 	}
 
 	slog.SetDefault(logger)
@@ -52,7 +62,73 @@ func main() {
 	)
 	defer stop()
 
-	router := httpadapter.NewRouter()
+	mysqlDB, err := database.OpenMySQL(ctx, database.MySQLOptions{
+		Host:     cfg.MySQL.Host,
+		Port:     cfg.MySQL.Port,
+		Database: cfg.MySQL.Database,
+		User:     cfg.MySQL.User,
+		Password: cfg.MySQL.Password,
+	})
+	if err != nil {
+		logger.Error(
+			"failed to initialize MySQL",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	defer func() {
+		if err := mysqlDB.Close(); err != nil {
+			logger.Error(
+				"failed to close MySQL connection",
+				slog.Any("error", err),
+			)
+		}
+	}()
+
+	logger.Info("MySQL connection established")
+
+	jobRepository, err := mysqladapter.NewJobRepository(mysqlDB.GORM())
+	if err != nil {
+		logger.Error(
+			"failed to initialize job repository",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	createJob, err := usecase.NewCreateJob(
+		jobRepository,
+		idgen.NewUUIDGenerator(),
+		clock.NewSystemClock(),
+	)
+	if err != nil {
+		logger.Error(
+			"failed to initialize create-job use case",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	getJob, err := usecase.NewGetJob(jobRepository)
+	if err != nil {
+		logger.Error(
+			"failed to initialize get-job use case",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	jobHandler, err := httphandler.NewJobHandler(createJob, getJob, logger)
+	if err != nil {
+		logger.Error(
+			"failed to initialize job handler",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	router := httpadapter.NewRouter(mysqlDB, jobHandler)
 
 	httpServer := server.NewHTTPServer(
 		cfg.HTTP.Address,
@@ -67,8 +143,9 @@ func main() {
 			"application stopped unexpectedly",
 			slog.Any("error", err),
 		)
-		os.Exit(1)
+		return 1
 	}
 
 	logger.Info("application stopped")
+	return 0
 }

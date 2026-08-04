@@ -1,14 +1,23 @@
 package handler
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
+	"time"
 )
 
-type HealthHandler struct{}
+const readinessTimeout = 2 * time.Second
 
-func NewHealthHandler() *HealthHandler {
-	return &HealthHandler{}
+type ReadinessChecker interface {
+	Ping(ctx context.Context) error
+}
+
+type HealthHandler struct {
+	readinessChecker ReadinessChecker
+}
+
+func NewHealthHandler(readinessChecker ReadinessChecker) *HealthHandler {
+	return &HealthHandler{readinessChecker: readinessChecker}
 }
 
 func (h *HealthHandler) Live(
@@ -22,23 +31,26 @@ func (h *HealthHandler) Live(
 
 func (h *HealthHandler) Ready(
 	writer http.ResponseWriter,
-	_ *http.Request,
+	request *http.Request,
 ) {
-	// MySQL readiness will be added when the database adapter is created.
+	if h.readinessChecker == nil {
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{
+			"status": "not_ready",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(request.Context(), readinessTimeout)
+	defer cancel()
+
+	if err := h.readinessChecker.Ping(ctx); err != nil {
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{
+			"status": "not_ready",
+		})
+		return
+	}
+
 	writeJSON(writer, http.StatusOK, map[string]string{
 		"status": "ready",
 	})
-}
-
-func writeJSON(
-	writer http.ResponseWriter,
-	status int,
-	response any,
-) {
-	writer.Header().Set("Content-Type", "application/json")
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.WriteHeader(status)
-
-	// A failure here usually means the client disconnected.
-	_ = json.NewEncoder(writer).Encode(response)
 }
