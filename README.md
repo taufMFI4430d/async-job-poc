@@ -243,81 +243,7 @@ pending → processing → success
 
 Before the retry limit, a failed processing attempt will return to `pending`; worker transitions are introduced later.
 
-## Database migrations
 
-Migrations run automatically before the API starts.
-
-Apply pending migrations manually:
-
-```bash
-make migrate-up
-```
-
-Show the current migration version:
-
-```bash
-make migrate-status
-```
-
-Roll back exactly one migration:
-
-```bash
-make migrate-down
-```
-
-Rolling back migration `000001_create_jobs` drops the `jobs` table and its data. Use rollback commands carefully.
-
-GORM `AutoMigrate` is intentionally not used. Versioned SQL files provide explicit schema review and rollback behavior.
-
-## Testing and checks
-
-Run the unit test suite:
-
-```bash
-make test
-```
-
-Run formatting, tests, static analysis, and Compose validation:
-
-```bash
-make check
-```
-
-Run the real MySQL repository integration test while the MySQL container is running:
-
-```bash
-make test-integration
-```
-
-The integration test creates a unique job, verifies duplicate handling and lookup behavior, and removes its test row afterward.
-
-Generate a coverage summary:
-
-```bash
-make test-cover
-```
-
-## Developer commands
-
-Run `make help` to list all commands.
-
-| Command | Purpose |
-|---|---|
-| `make up` | Build and start the complete stack |
-| `make down` | Stop containers while preserving volumes |
-| `make ps` | Display container and health status |
-| `make logs` | Follow API, MySQL, and Redis logs |
-| `make run` | Run Go locally against Docker MySQL and Redis |
-| `make test` | Run unit tests |
-| `make test-integration` | Run the real MySQL repository test |
-| `make fmt` | Format Go code |
-| `make vet` | Run Go static analysis |
-| `make check` | Run the standard pre-commit checks |
-| `make migrate-up` | Apply migrations |
-| `make migrate-down` | Roll back one migration |
-| `make migrate-status` | Show migration state |
-| `make mysql` | Open a MySQL shell |
-| `make redis` | Open a Redis CLI |
 
 ## Configuration
 
@@ -341,37 +267,4 @@ Configuration is read once at application startup and passed to outer-layer comp
 | `REDIS_HOST_PORT` | Redis port exposed on the host | `6379` |
 | `REDIS_PASSWORD` | Optional Redis password | Empty locally |
 
-Never commit `.env`. Only `.env.example` belongs in version control.
 
-## Troubleshooting
-
-### MySQL says the root password is missing
-
-Ensure `.env` contains `MYSQL_ROOT_PASSWORD`, then recreate the MySQL container so it receives the updated environment:
-
-```bash
-docker-compose up -d --force-recreate mysql
-```
-
-### Changing MySQL passwords has no effect
-
-MySQL initialization variables are applied only to an empty data directory. Existing volumes retain their original users and passwords. Do not remove the volume unless you intentionally want to delete all local database data.
-
-### A host port is already in use
-
-Change `API_HOST_PORT`, `MYSQL_HOST_PORT`, or `REDIS_HOST_PORT` in `.env`. Container-side ports remain `8080`, `3306`, and `6379`.
-
-### Jobs remain pending
-
-That is expected at the end of Day 2. Redis queue publishing starts on Day 3, and worker processing follows on Days 4–5.
-
-## Roadmap
-
-- Day 3: publish job IDs to a Redis list.
-- Day 4: consume queued jobs with one worker.
-- Day 5: introduce a five-goroutine worker pool.
-- Day 6: implement job-type-specific processing.
-- Day 7: implement retry and final failure behavior.
-- Day 8: expand lifecycle logging and status tracking.
-- Day 9: add the minimal React UI.
-- Day 10: polish integration tests, Docker, README, and demo flow.
