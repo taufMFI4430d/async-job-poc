@@ -5,5 +5,4 @@
 *.dylib
 .env
 *.test
-
-
+.postman

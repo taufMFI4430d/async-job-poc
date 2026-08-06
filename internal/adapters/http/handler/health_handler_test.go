@@ -104,3 +104,29 @@ func TestReadyReturnsServiceUnavailableWhenDependencyIsDown(t *testing.T) {
 		)
 	}
 }
+
+func TestReadyChecksAllDependencies(t *testing.T) {
+	healthHandler := handler.NewHealthHandler(
+		readinessCheckerStub{},
+		readinessCheckerStub{
+			err: errors.New("Redis unavailable"),
+		},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/health/ready",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	healthHandler.Ready(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusServiceUnavailable,
+			response.Code,
+		)
+	}
+}

@@ -72,3 +72,46 @@ func (repository *JobRepository) GetByID(
 
 	return entity, nil
 }
+
+func (repository *JobRepository) Update(
+	ctx context.Context,
+	entity *job.Job,
+) error {
+	record, err := jobRecordFromDomain(entity)
+	if err != nil {
+		return fmt.Errorf("map job for update: %w", err)
+	}
+
+	result := repository.db.
+		WithContext(ctx).
+		Model(&jobRecord{}).
+		Where("id = ?", record.ID).
+		Select(
+			"status",
+			"retry_count",
+			"max_retries",
+			"last_error",
+			"updated_at",
+			"started_at",
+			"completed_at",
+		).
+		Updates(&record)
+
+	if result.Error != nil {
+		return fmt.Errorf(
+			"update job %s: %w",
+			record.ID,
+			result.Error,
+		)
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf(
+			"%w: %s",
+			ports.ErrJobNotFound,
+			record.ID,
+		)
+	}
+
+	return nil
+}

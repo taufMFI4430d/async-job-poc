@@ -17,17 +17,23 @@ type CreateJobInput struct {
 
 type CreateJob struct {
 	repository  ports.JobRepository
+	jobQueue    ports.JobQueue
 	idGenerator ports.IDGenerator
 	clock       ports.Clock
 }
 
 func NewCreateJob(
 	repository ports.JobRepository,
+	jobQueue ports.JobQueue,
 	idGenerator ports.IDGenerator,
 	clock ports.Clock,
 ) (*CreateJob, error) {
 	if repository == nil {
 		return nil, errors.New("job repository must not be nil")
+	}
+
+	if jobQueue == nil {
+		return nil, errors.New("job queue must not be nil")
 	}
 
 	if idGenerator == nil {
@@ -40,6 +46,7 @@ func NewCreateJob(
 
 	return &CreateJob{
 		repository:  repository,
+		jobQueue:    jobQueue,
 		idGenerator: idGenerator,
 		clock:       clock,
 	}, nil
@@ -71,6 +78,14 @@ func (useCase *CreateJob) Execute(
 
 	if err := useCase.repository.Create(ctx, entity); err != nil {
 		return nil, fmt.Errorf("persist job: %w", err)
+	}
+
+	if err := useCase.jobQueue.Enqueue(ctx, entity.ID()); err != nil {
+		return nil, fmt.Errorf(
+			"publish job %s to queue: %w",
+			entity.ID(),
+			err,
+		)
 	}
 
 	return entity, nil

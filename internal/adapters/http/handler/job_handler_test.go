@@ -313,3 +313,40 @@ func assertAPIError(
 		t.Fatalf("expected error code %q, got %q", expectedCode, body.Error.Code)
 	}
 }
+
+func TestJobHandlerCreateMapsQueueUnavailable(t *testing.T) {
+	createExecutor := createJobExecutorStub{
+		execute: func(
+			context.Context,
+			usecase.CreateJobInput,
+		) (*job.Job, error) {
+			return nil, ports.ErrJobQueueUnavailable
+		},
+	}
+
+	jobHandler := newTestJobHandler(
+		t,
+		createExecutor,
+		successfulGetExecutor(newHandlerTestJob(t)),
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/jobs",
+		strings.NewReader(
+			`{"type":"send_email","payload":{"to":"learner@example.com"}}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+
+	jobHandler.Create(response, request)
+
+	assertAPIError(
+		t,
+		response,
+		http.StatusServiceUnavailable,
+		"job_queue_unavailable",
+	)
+}

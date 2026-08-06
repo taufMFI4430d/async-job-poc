@@ -1,8 +1,9 @@
 package config_test
 
 import (
-	"github.com/taufMFI4430d/async-job-poc/internal/platform/config"
 	"testing"
+
+	"github.com/taufMFI4430d/async-job-poc/internal/platform/config"
 )
 
 func TestLoadReturnsValidConfiguration(t *testing.T) {
@@ -16,6 +17,8 @@ func TestLoadReturnsValidConfiguration(t *testing.T) {
 	t.Setenv("MYSQL_PASSWORD", "test_password")
 	t.Setenv("REDIS_HOST", "localhost")
 	t.Setenv("REDIS_PORT", "6380")
+	t.Setenv("REDIS_DB", "2")
+	t.Setenv("REDIS_QUEUE_NAME", "test:jobs:pending")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -42,6 +45,21 @@ func TestLoadReturnsValidConfiguration(t *testing.T) {
 			cfg.Redis.Port,
 		)
 	}
+
+	if cfg.Redis.DB != 2 {
+		t.Errorf(
+			"expected Redis DB 2, got %d",
+			cfg.Redis.DB,
+		)
+	}
+
+	if cfg.Redis.QueueName != "test:jobs:pending" {
+		t.Errorf(
+			"expected Redis queue name %q, got %q",
+			"test:jobs:pending",
+			cfg.Redis.QueueName,
+		)
+	}
 }
 
 func TestLoadRejectsInvalidMySQLPort(t *testing.T) {
@@ -63,5 +81,19 @@ func TestLoadRejectsMissingRequiredValues(t *testing.T) {
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("expected an error for missing required configuration")
+	}
+}
+
+func TestLoadRejectsNegativeRedisDB(t *testing.T) {
+	t.Setenv("MYSQL_HOST", "localhost")
+	t.Setenv("MYSQL_DATABASE", "async_jobs_test")
+	t.Setenv("MYSQL_USER", "test_user")
+	t.Setenv("MYSQL_PASSWORD", "test_password")
+	t.Setenv("REDIS_HOST", "localhost")
+	t.Setenv("REDIS_DB", "-1")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an error for a negative Redis DB")
 	}
 }

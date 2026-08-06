@@ -17,6 +17,7 @@ const useCaseTestJobID = "d3b75d2a-7485-42f3-bbf9-97c2400f897f"
 type repositoryStub struct {
 	create  func(context.Context, *job.Job) error
 	getByID func(context.Context, job.ID) (*job.Job, error)
+	update  func(context.Context, *job.Job) error
 }
 
 func (repository repositoryStub) Create(
@@ -41,6 +42,17 @@ func (repository repositoryStub) GetByID(
 	return nil, ports.ErrJobNotFound
 }
 
+func (repository repositoryStub) Update(
+	ctx context.Context,
+	entity *job.Job,
+) error {
+	if repository.update == nil {
+		return nil
+	}
+
+	return repository.update(ctx, entity)
+}
+
 type idGeneratorStub struct {
 	id     job.ID
 	err    error
@@ -60,6 +72,26 @@ func (clock clockStub) Now() time.Time {
 	return clock.now
 }
 
+type jobQueueStub struct {
+	enqueue func(context.Context, job.ID) error
+	called  bool
+	jobID   job.ID
+}
+
+func (queue *jobQueueStub) Enqueue(
+	ctx context.Context,
+	id job.ID,
+) error {
+	queue.called = true
+	queue.jobID = id
+
+	if queue.enqueue == nil {
+		return nil
+	}
+
+	return queue.enqueue(ctx, id)
+}
+
 func TestCreateJobPersistsPendingJob(t *testing.T) {
 	fixedTime := time.Date(2026, time.August, 3, 14, 30, 0, 0, time.UTC)
 	idGenerator := &idGeneratorStub{id: job.ID(useCaseTestJobID)}
@@ -72,8 +104,11 @@ func TestCreateJobPersistsPendingJob(t *testing.T) {
 		},
 	}
 
+	jobQueue := &jobQueueStub{}
+
 	createJob, err := usecase.NewCreateJob(
 		repository,
+		jobQueue,
 		idGenerator,
 		clockStub{now: fixedTime},
 	)
@@ -116,12 +151,26 @@ func TestCreateJobPersistsPendingJob(t *testing.T) {
 			created.MaxRetries(),
 		)
 	}
+
+	if !jobQueue.called {
+		t.Fatal("expected the job queue to be called")
+	}
+
+	if jobQueue.jobID != created.ID() {
+		t.Errorf(
+			"expected queued ID %q, got %q",
+			created.ID(),
+			jobQueue.jobID,
+		)
+	}
+
 }
 
 func TestCreateJobRejectsUnsupportedTypeBeforeGeneratingID(t *testing.T) {
 	idGenerator := &idGeneratorStub{id: job.ID(useCaseTestJobID)}
 	createJob, err := usecase.NewCreateJob(
 		repositoryStub{},
+		&jobQueueStub{},
 		idGenerator,
 		clockStub{now: time.Now()},
 	)
@@ -153,6 +202,7 @@ func TestCreateJobRejectsInvalidPayloadWithoutPersisting(t *testing.T) {
 
 	createJob, err := usecase.NewCreateJob(
 		repository,
+		&jobQueueStub{},
 		&idGeneratorStub{id: job.ID(useCaseTestJobID)},
 		clockStub{now: time.Now()},
 	)
@@ -180,9 +230,11 @@ func TestCreateJobPreservesRepositoryError(t *testing.T) {
 			return expectedError
 		},
 	}
+	jobQueue := &jobQueueStub{}
 
 	createJob, err := usecase.NewCreateJob(
 		repository,
+		jobQueue,
 		&idGeneratorStub{id: job.ID(useCaseTestJobID)},
 		clockStub{now: time.Now()},
 	)
@@ -197,12 +249,17 @@ func TestCreateJobPreservesRepositoryError(t *testing.T) {
 	if !errors.Is(err, expectedError) {
 		t.Fatalf("expected repository error to be preserved, got %v", err)
 	}
+
+	if jobQueue.called {
+		t.Fatal("job must not be queued when persistence fails")
+	}
 }
 
 func TestCreateJobPreservesIDGeneratorError(t *testing.T) {
 	expectedError := errors.New("random source unavailable")
 	createJob, err := usecase.NewCreateJob(
 		repositoryStub{},
+		&jobQueueStub{},
 		&idGeneratorStub{err: expectedError},
 		clockStub{now: time.Now()},
 	)
@@ -216,5 +273,65 @@ func TestCreateJobPreservesIDGeneratorError(t *testing.T) {
 	})
 	if !errors.Is(err, expectedError) {
 		t.Fatalf("expected ID generator error to be preserved, got %v", err)
+	}
+}
+
+func TestCreateJobPreservesQueueError(t *testing.T) {
+	expectedError := ports.ErrJobQueueUnavailable
+	persistCalled := false
+
+	repository := repositoryStub{
+		create: func(
+			context.Context,
+			*job.Job,
+		) error {
+			persistCalled = true
+			return nil
+		},
+	}
+
+	jobQueue := &jobQueueStub{
+		enqueue: func(
+			context.Context,
+			job.ID,
+		) error {
+			return expectedError
+		},
+	}
+
+	createJob, err := usecase.NewCreateJob(
+		repository,
+		jobQueue,
+		&idGeneratorStub{
+			id: job.ID(useCaseTestJobID),
+		},
+		clockStub{now: time.Now()},
+	)
+	if err != nil {
+		t.Fatalf(
+			"NewCreateJob() returned an unexpected error: %v",
+			err,
+		)
+	}
+
+	_, err = createJob.Execute(
+		context.Background(),
+		usecase.CreateJobInput{
+			Type: job.TypeSendEmail.String(),
+			Payload: json.RawMessage(
+				`{"to":"learner@example.com"}`,
+			),
+		},
+	)
+
+	if !errors.Is(err, ports.ErrJobQueueUnavailable) {
+		t.Fatalf(
+			"expected ErrJobQueueUnavailable, got %v",
+			err,
+		)
+	}
+
+	if !persistCalled {
+		t.Fatal("job should be persisted before enqueueing")
 	}
 }

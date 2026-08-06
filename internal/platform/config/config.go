@@ -15,6 +15,8 @@ const (
 	defaultLogLevel       = "info"
 	defaultMySQLPort      = 3306
 	defaultRedisPort      = 6379
+	defaultRedisDB        = 0
+	defaultRedisQueueName = "jobs:pending"
 )
 
 type Config struct {
@@ -42,9 +44,11 @@ type MySQLConfig struct {
 }
 
 type RedisConfig struct {
-	Host     string
-	Port     int
-	Password string
+	Host      string
+	Port      int
+	Password  string
+	DB        int
+	QueueName string
 }
 
 type LogConfig struct {
@@ -58,6 +62,11 @@ func Load() (Config, error) {
 	}
 
 	redisPort, err := intFromEnvironment("REDIS_PORT", defaultRedisPort)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisDB, err := intFromEnvironment("REDIS_DB", defaultRedisDB)
 	if err != nil {
 		return Config{}, err
 	}
@@ -86,6 +95,11 @@ func Load() (Config, error) {
 			Host:     os.Getenv("REDIS_HOST"),
 			Port:     redisPort,
 			Password: os.Getenv("REDIS_PASSWORD"),
+			DB:       redisDB,
+			QueueName: valueOrDefault(
+				"REDIS_QUEUE_NAME",
+				defaultRedisQueueName,
+			),
 		},
 		Log: LogConfig{
 			Level: valueOrDefault(
@@ -128,6 +142,20 @@ func (cfg Config) Validate() error {
 
 	if err := validatePort("REDIS_PORT", cfg.Redis.Port); err != nil {
 		validationErrors = append(validationErrors, err)
+	}
+
+	if cfg.Redis.DB < 0 {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf("REDIS_DB must be zero or greater"),
+		)
+	}
+
+	if strings.TrimSpace(cfg.Redis.QueueName) == "" {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf("REDIS_QUEUE_NAME is required"),
+		)
 	}
 
 	if err := validateHTTPAddress(cfg.HTTP.Address); err != nil {

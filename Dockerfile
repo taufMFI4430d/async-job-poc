@@ -8,11 +8,17 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -trimpath \
-    -ldflags="-s -w" \
-    -o /out/api \
-    ./cmd/api
+ARG APP_NAME=api
+
+RUN case "$APP_NAME" in \
+        api|worker) ;; \
+        *) echo "APP_NAME must be api or worker" && exit 1 ;; \
+    esac \
+    && CGO_ENABLED=0 GOOS=linux go build \
+        -trimpath \
+        -ldflags="-s -w" \
+        -o /out/app \
+        "./cmd/${APP_NAME}"
 
 
 FROM alpine:3.22 AS runtime
@@ -23,10 +29,8 @@ RUN apk add --no-cache ca-certificates \
 
 WORKDIR /app
 
-COPY --from=builder /out/api /app/api
+COPY --from=builder /out/app /app/app
 
 USER app
 
-EXPOSE 8080
-
-ENTRYPOINT ["/app/api"]
+ENTRYPOINT ["/app/app"]

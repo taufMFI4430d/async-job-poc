@@ -104,6 +104,41 @@ func TestJobRepositoryAgainstMySQL(t *testing.T) {
 	if !errors.Is(err, ports.ErrJobNotFound) {
 		t.Fatalf("expected ErrJobNotFound, got %v", err)
 	}
+
+	processingAt := time.Now().UTC().Add(time.Second)
+
+	if err := persisted.MarkProcessing(processingAt); err != nil {
+		t.Fatalf("mark persisted job as processing: %v", err)
+	}
+
+	if err := repository.Update(ctx, persisted); err != nil {
+		t.Fatalf("update persisted job: %v", err)
+	}
+
+	updated, err := repository.GetByID(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get updated job: %v", err)
+	}
+
+	if updated.Status() != job.StatusProcessing {
+		t.Fatalf(
+			"expected processing status, got %s",
+			updated.Status(),
+		)
+	}
+
+	startedAt, exists := updated.StartedAt()
+	if !exists {
+		t.Fatal("expected updated job to have started_at")
+	}
+
+	if !startedAt.Equal(processingAt) {
+		t.Fatalf(
+			"expected started_at %v, got %v",
+			processingAt,
+			startedAt,
+		)
+	}
 }
 
 func randomJobID(t *testing.T) job.ID {

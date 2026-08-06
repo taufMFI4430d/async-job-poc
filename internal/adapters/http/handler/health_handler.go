@@ -13,14 +13,18 @@ type ReadinessChecker interface {
 }
 
 type HealthHandler struct {
-	readinessChecker ReadinessChecker
+	readinessCheckers []ReadinessChecker
 }
 
-func NewHealthHandler(readinessChecker ReadinessChecker) *HealthHandler {
-	return &HealthHandler{readinessChecker: readinessChecker}
+func NewHealthHandler(
+	readinessCheckers ...ReadinessChecker,
+) *HealthHandler {
+	return &HealthHandler{
+		readinessCheckers: readinessCheckers,
+	}
 }
 
-func (h *HealthHandler) Live(
+func (handler *HealthHandler) Live(
 	writer http.ResponseWriter,
 	_ *http.Request,
 ) {
@@ -29,28 +33,44 @@ func (h *HealthHandler) Live(
 	})
 }
 
-func (h *HealthHandler) Ready(
+func (handler *HealthHandler) Ready(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) {
-	if h.readinessChecker == nil {
-		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{
-			"status": "not_ready",
-		})
+	if len(handler.readinessCheckers) == 0 {
+		writeNotReady(writer)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(request.Context(), readinessTimeout)
+	ctx, cancel := context.WithTimeout(
+		request.Context(),
+		readinessTimeout,
+	)
 	defer cancel()
 
-	if err := h.readinessChecker.Ping(ctx); err != nil {
-		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{
-			"status": "not_ready",
-		})
-		return
+	for _, readinessChecker := range handler.readinessCheckers {
+		if readinessChecker == nil {
+			writeNotReady(writer)
+			return
+		}
+
+		if err := readinessChecker.Ping(ctx); err != nil {
+			writeNotReady(writer)
+			return
+		}
 	}
 
 	writeJSON(writer, http.StatusOK, map[string]string{
 		"status": "ready",
 	})
+}
+
+func writeNotReady(writer http.ResponseWriter) {
+	writeJSON(
+		writer,
+		http.StatusServiceUnavailable,
+		map[string]string{
+			"status": "not_ready",
+		},
+	)
 }

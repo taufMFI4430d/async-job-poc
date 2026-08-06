@@ -212,3 +212,163 @@ func TestParseStatusRejectsUnknownStatus(t *testing.T) {
 		t.Fatalf("expected ErrInvalidStatus, got %v", err)
 	}
 }
+
+func TestJobLifecycleTransitionsToSuccess(t *testing.T) {
+	createdAt := time.Date(
+		2026,
+		time.August,
+		5,
+		10,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	entity, err := job.New(job.NewParams{
+		ID:        job.ID(validJobID),
+		Type:      job.TypeSendEmail,
+		Payload:   json.RawMessage(`{"to":"learner@example.com"}`),
+		CreatedAt: createdAt,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	processingAt := createdAt.Add(time.Second)
+	if err := entity.MarkProcessing(processingAt); err != nil {
+		t.Fatalf("mark processing: %v", err)
+	}
+
+	if entity.Status() != job.StatusProcessing {
+		t.Fatalf(
+			"expected processing status, got %s",
+			entity.Status(),
+		)
+	}
+
+	startedAt, exists := entity.StartedAt()
+	if !exists || !startedAt.Equal(processingAt) {
+		t.Fatalf(
+			"expected started_at %v, got %v",
+			processingAt,
+			startedAt,
+		)
+	}
+
+	completedAt := processingAt.Add(time.Second)
+	if err := entity.MarkSuccess(completedAt); err != nil {
+		t.Fatalf("mark success: %v", err)
+	}
+
+	if entity.Status() != job.StatusSuccess {
+		t.Fatalf(
+			"expected success status, got %s",
+			entity.Status(),
+		)
+	}
+
+	actualCompletedAt, exists := entity.CompletedAt()
+	if !exists || !actualCompletedAt.Equal(completedAt) {
+		t.Fatalf(
+			"expected completed_at %v, got %v",
+			completedAt,
+			actualCompletedAt,
+		)
+	}
+}
+
+func TestJobLifecycleTransitionsToFailed(t *testing.T) {
+	createdAt := time.Now().UTC()
+
+	entity, err := job.New(job.NewParams{
+		ID:        job.ID(validJobID),
+		Type:      job.TypeReportGeneration,
+		Payload:   json.RawMessage(`{"report":"monthly"}`),
+		CreatedAt: createdAt,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	if err := entity.MarkProcessing(
+		createdAt.Add(time.Second),
+	); err != nil {
+		t.Fatalf("mark processing: %v", err)
+	}
+
+	failedAt := createdAt.Add(2 * time.Second)
+	if err := entity.MarkFailed(
+		failedAt,
+		" report generator unavailable ",
+	); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+
+	if entity.Status() != job.StatusFailed {
+		t.Fatalf(
+			"expected failed status, got %s",
+			entity.Status(),
+		)
+	}
+
+	lastError, exists := entity.LastError()
+	if !exists {
+		t.Fatal("expected a last error")
+	}
+
+	if lastError != "report generator unavailable" {
+		t.Fatalf("unexpected last error: %q", lastError)
+	}
+}
+
+func TestJobRejectsInvalidLifecycleTransition(t *testing.T) {
+	createdAt := time.Now().UTC()
+
+	entity, err := job.New(job.NewParams{
+		ID:        job.ID(validJobID),
+		Type:      job.TypeDataCleanup,
+		Payload:   json.RawMessage(`{"scope":"expired"}`),
+		CreatedAt: createdAt,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	err = entity.MarkSuccess(createdAt.Add(time.Second))
+	if !errors.Is(err, job.ErrInvalidTransition) {
+		t.Fatalf(
+			"expected ErrInvalidTransition, got %v",
+			err,
+		)
+	}
+
+	if entity.Status() != job.StatusPending {
+		t.Fatalf(
+			"invalid transition changed status to %s",
+			entity.Status(),
+		)
+	}
+}
+
+func TestJobRejectsLifecycleTimeBeforeLastUpdate(t *testing.T) {
+	createdAt := time.Now().UTC()
+
+	entity, err := job.New(job.NewParams{
+		ID:        job.ID(validJobID),
+		Type:      job.TypeSendEmail,
+		Payload:   json.RawMessage(`{"to":"learner@example.com"}`),
+		CreatedAt: createdAt,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	err = entity.MarkProcessing(createdAt.Add(-time.Second))
+	if !errors.Is(err, job.ErrInvalidEventTime) {
+		t.Fatalf(
+			"expected ErrInvalidEventTime, got %v",
+			err,
+		)
+	}
+}

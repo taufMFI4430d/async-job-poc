@@ -3,7 +3,10 @@ SHELL := /bin/sh
 COMPOSE ?= docker-compose
 GO ?= go
 
-.PHONY: help up down build ps logs api-logs run test test-cover test-integration fmt fmt-check vet check compose-config migrate-up migrate-down migrate-status mysql redis
+.PHONY: help up down build ps logs api-logs run test test-cover test-integration fmt fmt-check vet check compose-config migrate-up migrate-down migrate-status mysql redis \
+	docker-up docker-down docker-logs docker-ps \
+	test-integration test-integration-mysql test-integration-redis \
+	queue-list queue-length
 
 help:
 	@echo "Available commands:"
@@ -26,6 +29,13 @@ help:
 	@echo "  make migrate-status    Show the current migration version"
 	@echo "  make mysql             Open a MySQL shell"
 	@echo "  make redis             Open a Redis CLI"
+	@echo "  make test-integration       Run all integration tests"
+	@echo "  make test-integration-mysql Run MySQL integration tests"
+	@echo "  make test-integration-redis Run Redis integration tests"
+	@echo "  make queue-list             Show queued job IDs"
+	@echo "  make queue-length           Show number of queued jobs"
+	@echo "  make worker-logs            Follow worker logs only"
+	@echo "  make run-worker             Run one worker locally"
 
 up:
 	$(COMPOSE) up -d --build
@@ -39,8 +49,17 @@ build:
 ps:
 	$(COMPOSE) ps
 
-logs:
-	$(COMPOSE) logs -f api mysql redis
+worker-logs:
+	$(COMPOSE) logs -f worker
+
+run-worker:
+	@test -f .env || (echo ".env is missing; copy .env.example to .env first" && exit 1)
+	@set -a; . ./.env; set +a; \
+		MYSQL_HOST=127.0.0.1 \
+		MYSQL_PORT="$${MYSQL_HOST_PORT:-3306}" \
+		REDIS_HOST=127.0.0.1 \
+		REDIS_PORT="$${REDIS_HOST_PORT:-6379}" \
+		$(GO) run ./cmd/worker
 
 api-logs:
 	$(COMPOSE) logs -f api
@@ -61,12 +80,37 @@ test-cover:
 	$(GO) test -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out
 
-test-integration:
-	@test -f .env || (echo ".env is missing; copy .env.example to .env first" && exit 1)
+test-integration: test-integration-mysql test-integration-redis
+
+test-integration-mysql:
+	@test -f .env || (echo ".env file is required"; exit 1)
 	@set -a; . ./.env; set +a; \
 		MYSQL_HOST=127.0.0.1 \
 		MYSQL_PORT="$${MYSQL_HOST_PORT:-3306}" \
-		$(GO) test -tags=integration ./internal/adapters/mysql -run TestJobRepositoryAgainstMySQL -v
+		$(GO) test -tags=integration ./internal/adapters/mysql \
+		-run TestJobRepositoryAgainstMySQL -v
+
+test-integration-redis:
+	@test -f .env || (echo ".env file is required"; exit 1)
+	@set -a; . ./.env; set +a; \
+		REDIS_HOST=127.0.0.1 \
+		REDIS_PORT="$${REDIS_HOST_PORT:-6379}" \
+		$(GO) test -tags=integration ./internal/adapters/redis \
+		-run TestJobQueueAgainstRedis -v
+
+queue-list:
+	@test -f .env || (echo ".env file is required"; exit 1)
+	@set -a; . ./.env; set +a; \
+		$(COMPOSE) exec redis redis-cli \
+		-n "$${REDIS_DB:-0}" \
+		LRANGE "$${REDIS_QUEUE_NAME:-jobs:pending}" 0 -1
+
+queue-length:
+	@test -f .env || (echo ".env file is required"; exit 1)
+	@set -a; . ./.env; set +a; \
+		$(COMPOSE) exec redis redis-cli \
+		-n "$${REDIS_DB:-0}" \
+		LLEN "$${REDIS_QUEUE_NAME:-jobs:pending}"
 
 fmt:
 	gofmt -w cmd internal

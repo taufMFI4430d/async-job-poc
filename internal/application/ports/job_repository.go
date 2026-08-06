@@ -17,4 +17,5 @@ var (
 type JobRepository interface {
 	Create(ctx context.Context, entity *job.Job) error
 	GetByID(ctx context.Context, id job.ID) (*job.Job, error)
+	Update(ctx context.Context, entity *job.Job) error
 }

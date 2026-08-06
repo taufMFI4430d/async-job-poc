@@ -232,6 +232,19 @@ func (handler *JobHandler) writeApplicationError(
 			"job_already_exists",
 			"job already exists",
 		)
+	case errors.Is(err, ports.ErrJobQueueUnavailable):
+		handler.logger.Error(
+			"job could not be published to Redis",
+			slog.String("operation", operation),
+			slog.Any("error", err),
+		)
+
+		writeAPIError(
+			writer,
+			http.StatusServiceUnavailable,
+			"job_queue_unavailable",
+			"job queue is temporarily unavailable",
+		)
 	default:
 		handler.logger.Error(
 			"job request failed",

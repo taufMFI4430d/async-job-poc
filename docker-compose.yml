@@ -69,6 +69,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_NAME : api
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-development}
@@ -84,6 +86,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_QUEUE_NAME: ${REDIS_QUEUE_NAME:-jobs:pending}
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
     depends_on:
@@ -107,6 +111,36 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: worker
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_QUEUE_NAME: ${REDIS_QUEUE_NAME:-jobs:pending}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   mysql_data:

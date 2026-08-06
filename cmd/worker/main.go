@@ -6,20 +6,21 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	httpadapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/http"
-	httphandler "github.com/taufMFI4430d/async-job-poc/internal/adapters/http/handler"
+	executoradapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/executor"
 	mysqladapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/mysql"
 	redisadapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/redis"
+	workeradapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/worker"
 	"github.com/taufMFI4430d/async-job-poc/internal/application/usecase"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/cache"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/clock"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/config"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/database"
-	"github.com/taufMFI4430d/async-job-poc/internal/platform/idgen"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
-	"github.com/taufMFI4430d/async-job-poc/internal/platform/server"
 )
+
+const simulatedProcessingDuration = 2 * time.Second
 
 func main() {
 	os.Exit(run())
@@ -33,7 +34,7 @@ func run() int {
 	cfg, err := config.Load()
 	if err != nil {
 		bootstrapLogger.Error(
-			"failed to load application configuration",
+			"failed to load worker configuration",
 			slog.Any("error", err),
 		)
 		return 1
@@ -44,12 +45,12 @@ func run() int {
 		logging.Options{
 			Level:       cfg.Log.Level,
 			Environment: cfg.App.Environment,
-			ServiceName: "async-job-api",
+			ServiceName: "async-job-worker",
 		},
 	)
 	if err != nil {
 		bootstrapLogger.Error(
-			"failed to initialize application logger",
+			"failed to initialize worker logger",
 			slog.Any("error", err),
 		)
 		return 1
@@ -64,13 +65,16 @@ func run() int {
 	)
 	defer stop()
 
-	mysqlDB, err := database.OpenMySQL(ctx, database.MySQLOptions{
-		Host:     cfg.MySQL.Host,
-		Port:     cfg.MySQL.Port,
-		Database: cfg.MySQL.Database,
-		User:     cfg.MySQL.User,
-		Password: cfg.MySQL.Password,
-	})
+	mysqlDB, err := database.OpenMySQL(
+		ctx,
+		database.MySQLOptions{
+			Host:     cfg.MySQL.Host,
+			Port:     cfg.MySQL.Port,
+			Database: cfg.MySQL.Database,
+			User:     cfg.MySQL.User,
+			Password: cfg.MySQL.Password,
+		},
+	)
 	if err != nil {
 		logger.Error(
 			"failed to initialize MySQL",
@@ -121,7 +125,9 @@ func run() int {
 		slog.Int("database", cfg.Redis.DB),
 	)
 
-	jobRepository, err := mysqladapter.NewJobRepository(mysqlDB.GORM())
+	jobRepository, err := mysqladapter.NewJobRepository(
+		mysqlDB.GORM(),
+	)
 	if err != nil {
 		logger.Error(
 			"failed to initialize job repository",
@@ -142,60 +148,56 @@ func run() int {
 		return 1
 	}
 
-	createJob, err := usecase.NewCreateJob(
+	jobExecutor, err := executoradapter.NewSimulated(
+		simulatedProcessingDuration,
+	)
+	if err != nil {
+		logger.Error(
+			"failed to initialize job executor",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	processJob, err := usecase.NewProcessJob(
 		jobRepository,
-		jobQueue,
-		idgen.NewUUIDGenerator(),
+		jobExecutor,
 		clock.NewSystemClock(),
 	)
 	if err != nil {
 		logger.Error(
-			"failed to initialize create-job use case",
+			"failed to initialize process-job use case",
 			slog.Any("error", err),
 		)
 		return 1
 	}
 
-	getJob, err := usecase.NewGetJob(jobRepository)
-	if err != nil {
-		logger.Error(
-			"failed to initialize get-job use case",
-			slog.Any("error", err),
-		)
-		return 1
-	}
-
-	jobHandler, err := httphandler.NewJobHandler(createJob, getJob, logger)
-	if err != nil {
-		logger.Error(
-			"failed to initialize job handler",
-			slog.Any("error", err),
-		)
-		return 1
-	}
-
-	router := httpadapter.NewRouter(
-		jobHandler,
-		mysqlDB,
-		redisConnection,
-	)
-
-	httpServer := server.NewHTTPServer(
-		cfg.HTTP.Address,
-		router,
+	singleWorker, err := workeradapter.New(
+		jobQueue,
+		processJob,
 		logger,
 	)
-
-	logger.Info("application starting")
-
-	if err := httpServer.Run(ctx); err != nil {
+	if err != nil {
 		logger.Error(
-			"application stopped unexpectedly",
+			"failed to initialize worker",
 			slog.Any("error", err),
 		)
 		return 1
 	}
 
-	logger.Info("application stopped")
+	logger.Info(
+		"worker application starting",
+		slog.String("queue", cfg.Redis.QueueName),
+	)
+
+	if err := singleWorker.Run(ctx); err != nil {
+		logger.Error(
+			"worker stopped unexpectedly",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	logger.Info("worker application stopped")
 	return 0
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -233,4 +234,95 @@ func cloneTimePointerUTC(value *time.Time) *time.Time {
 
 	cloned := value.UTC()
 	return &cloned
+}
+
+func (entity *Job) MarkProcessing(at time.Time) error {
+	if entity.status != StatusPending {
+		return fmt.Errorf(
+			"%w: cannot move job from %s to %s",
+			ErrInvalidTransition,
+			entity.status,
+			StatusProcessing,
+		)
+	}
+
+	transitionTime, err := entity.transitionTime(at)
+	if err != nil {
+		return err
+	}
+
+	entity.status = StatusProcessing
+	entity.startedAt = &transitionTime
+	entity.completedAt = nil
+	entity.lastError = nil
+	entity.updatedAt = transitionTime
+
+	return nil
+}
+
+func (entity *Job) MarkSuccess(at time.Time) error {
+	if entity.status != StatusProcessing {
+		return fmt.Errorf(
+			"%w: cannot move job from %s to %s",
+			ErrInvalidTransition,
+			entity.status,
+			StatusSuccess,
+		)
+	}
+
+	transitionTime, err := entity.transitionTime(at)
+	if err != nil {
+		return err
+	}
+
+	entity.status = StatusSuccess
+	entity.completedAt = &transitionTime
+	entity.lastError = nil
+	entity.updatedAt = transitionTime
+
+	return nil
+}
+
+func (entity *Job) MarkFailed(
+	at time.Time,
+	reason string,
+) error {
+	if entity.status != StatusProcessing {
+		return fmt.Errorf(
+			"%w: cannot move job from %s to %s",
+			ErrInvalidTransition,
+			entity.status,
+			StatusFailed,
+		)
+	}
+
+	normalizedReason := strings.TrimSpace(reason)
+	if normalizedReason == "" {
+		return ErrInvalidFailureReason
+	}
+
+	transitionTime, err := entity.transitionTime(at)
+	if err != nil {
+		return err
+	}
+
+	entity.status = StatusFailed
+	entity.lastError = &normalizedReason
+	entity.completedAt = &transitionTime
+	entity.updatedAt = transitionTime
+
+	return nil
+}
+
+func (entity *Job) transitionTime(
+	at time.Time,
+) (time.Time, error) {
+	if at.IsZero() || at.Before(entity.updatedAt) {
+		return time.Time{}, fmt.Errorf(
+			"%w: transition time must not be before the last update",
+			ErrInvalidEventTime,
+		)
+	}
+
+	return at.UTC(), nil
 }

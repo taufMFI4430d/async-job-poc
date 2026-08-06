@@ -7,12 +7,14 @@ import (
 )
 
 func NewRouter(
-	readinessChecker handler.ReadinessChecker,
 	jobHandler *handler.JobHandler,
+	readinessCheckers ...handler.ReadinessChecker,
 ) http.Handler {
 	router := http.NewServeMux()
 
-	healthHandler := handler.NewHealthHandler(readinessChecker)
+	healthHandler := handler.NewHealthHandler(
+		readinessCheckers...,
+	)
 
 	router.HandleFunc("GET /health/live", healthHandler.Live)
 	router.HandleFunc("GET /health/ready", healthHandler.Ready)
