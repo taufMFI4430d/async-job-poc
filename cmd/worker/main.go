@@ -207,6 +207,7 @@ func run() int {
 
 	processJob, err := usecase.NewProcessJob(
 		jobRepository,
+		jobQueue,
 		jobExecutor,
 		clock.NewSystemClock(),
 	)

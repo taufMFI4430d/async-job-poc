@@ -254,7 +254,6 @@ func (entity *Job) MarkProcessing(at time.Time) error {
 	entity.status = StatusProcessing
 	entity.startedAt = &transitionTime
 	entity.completedAt = nil
-	entity.lastError = nil
 	entity.updatedAt = transitionTime
 
 	return nil

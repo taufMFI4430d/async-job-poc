@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/taufMFI4430d/async-job-poc/internal/application/usecase"
 	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
 )
 
@@ -86,11 +87,43 @@ func (worker *ProcessorWorker) Run(
 			)
 
 			if err := worker.processor.Execute(ctx, jobID); err != nil {
-				logger.Error(
-					"job processing failed",
-					slog.String("job_id", jobID.String()),
-					slog.Any("error", err),
-				)
+				switch {
+				case errors.Is(
+					err,
+					usecase.ErrJobRetryScheduled,
+				):
+					logger.Warn(
+						"job retry scheduled",
+						slog.String(
+							"job_id",
+							jobID.String(),
+						),
+						slog.Any("error", err),
+					)
+
+				case errors.Is(
+					err,
+					usecase.ErrJobRetriesExhausted,
+				):
+					logger.Error(
+						"job retries exhausted",
+						slog.String(
+							"job_id",
+							jobID.String(),
+						),
+						slog.Any("error", err),
+					)
+
+				default:
+					logger.Error(
+						"job processing failed",
+						slog.String(
+							"job_id",
+							jobID.String(),
+						),
+						slog.Any("error", err),
+					)
+				}
 
 				if ctx.Err() != nil {
 					logger.Info(
