@@ -13,6 +13,7 @@ import (
 	redisadapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/redis"
 	workeradapter "github.com/taufMFI4430d/async-job-poc/internal/adapters/worker"
 	"github.com/taufMFI4430d/async-job-poc/internal/application/usecase"
+	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/cache"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/clock"
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/config"
@@ -20,7 +21,7 @@ import (
 	"github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
 )
 
-const simulatedProcessingDuration = 2 * time.Second
+const handlerProcessingDuration = 2 * time.Second
 
 func main() {
 	os.Exit(run())
@@ -148,12 +149,57 @@ func run() int {
 		return 1
 	}
 
-	jobExecutor, err := executoradapter.NewSimulated(
-		simulatedProcessingDuration,
+	sendEmailHandler, err :=
+		executoradapter.NewSendEmailHandler(
+			handlerProcessingDuration,
+			logger,
+		)
+	if err != nil {
+		logger.Error(
+			"failed to initialize send-email handler",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	reportGenerationHandler, err :=
+		executoradapter.NewReportGenerationHandler(
+			handlerProcessingDuration,
+			logger,
+		)
+	if err != nil {
+		logger.Error(
+			"failed to initialize report-generation handler",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	dataCleanupHandler, err :=
+		executoradapter.NewDataCleanupHandler(
+			handlerProcessingDuration,
+			logger,
+		)
+	if err != nil {
+		logger.Error(
+			"failed to initialize data-cleanup handler",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
+	jobExecutor, err := executoradapter.NewDispatcher(
+		map[job.Type]executoradapter.Handler{
+			job.TypeSendEmail: sendEmailHandler,
+
+			job.TypeReportGeneration: reportGenerationHandler,
+
+			job.TypeDataCleanup: dataCleanupHandler,
+		},
 	)
 	if err != nil {
 		logger.Error(
-			"failed to initialize job executor",
+			"failed to initialize job executor dispatcher",
 			slog.Any("error", err),
 		)
 		return 1
@@ -172,14 +218,14 @@ func run() int {
 		return 1
 	}
 
-	singleWorker, err := workeradapter.New(
+	workerPool, err := workeradapter.NewPool(
 		jobQueue,
 		processJob,
 		logger,
 	)
 	if err != nil {
 		logger.Error(
-			"failed to initialize worker",
+			"failed to initialize worker pool",
 			slog.Any("error", err),
 		)
 		return 1
@@ -188,11 +234,12 @@ func run() int {
 	logger.Info(
 		"worker application starting",
 		slog.String("queue", cfg.Redis.QueueName),
+		slog.Int("worker_count", workeradapter.WorkerCount),
 	)
 
-	if err := singleWorker.Run(ctx); err != nil {
+	if err := workerPool.Run(ctx); err != nil {
 		logger.Error(
-			"worker stopped unexpectedly",
+			"worker pool stopped unexpectedly",
 			slog.Any("error", err),
 		)
 		return 1

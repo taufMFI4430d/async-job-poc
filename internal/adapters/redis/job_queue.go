@@ -17,7 +17,10 @@ type JobQueue struct {
 	queueName string
 }
 
-var _ ports.JobQueue = (*JobQueue)(nil)
+var (
+	_ ports.JobQueue    = (*JobQueue)(nil)
+	_ ports.JobConsumer = (*JobQueue)(nil)
+)
 
 func NewJobQueue(
 	client *redis.Client,
