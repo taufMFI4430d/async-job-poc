@@ -10,6 +10,7 @@ func TestLoadReturnsValidConfiguration(t *testing.T) {
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("HTTP_ADDRESS", ":9090")
+	t.Setenv("UI_ASSETS_DIR", "testdata/ui")
 	t.Setenv("MYSQL_HOST", "localhost")
 	t.Setenv("MYSQL_PORT", "3307")
 	t.Setenv("MYSQL_DATABASE", "async_jobs_test")
@@ -29,6 +30,13 @@ func TestLoadReturnsValidConfiguration(t *testing.T) {
 		t.Errorf(
 			"expected HTTP address :9090, got %s",
 			cfg.HTTP.Address,
+		)
+	}
+
+	if cfg.UI.AssetsDirectory != "testdata/ui" {
+		t.Errorf(
+			"expected UI assets directory testdata/ui, got %s",
+			cfg.UI.AssetsDirectory,
 		)
 	}
 

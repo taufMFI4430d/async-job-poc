@@ -16,10 +16,11 @@ type CreateJobInput struct {
 }
 
 type CreateJob struct {
-	repository  ports.JobRepository
-	jobQueue    ports.JobQueue
-	idGenerator ports.IDGenerator
-	clock       ports.Clock
+	repository        ports.JobRepository
+	jobQueue          ports.JobQueue
+	idGenerator       ports.IDGenerator
+	clock             ports.Clock
+	lifecycleObserver ports.JobLifecycleObserver
 }
 
 func NewCreateJob(
@@ -27,6 +28,7 @@ func NewCreateJob(
 	jobQueue ports.JobQueue,
 	idGenerator ports.IDGenerator,
 	clock ports.Clock,
+	lifecycleObservers ...ports.JobLifecycleObserver,
 ) (*CreateJob, error) {
 	if repository == nil {
 		return nil, errors.New("job repository must not be nil")
@@ -43,12 +45,17 @@ func NewCreateJob(
 	if clock == nil {
 		return nil, errors.New("clock must not be nil")
 	}
+	lifecycleObserver, err := resolveLifecycleObserver(lifecycleObservers)
+	if err != nil {
+		return nil, err
+	}
 
 	return &CreateJob{
-		repository:  repository,
-		jobQueue:    jobQueue,
-		idGenerator: idGenerator,
-		clock:       clock,
+		repository:        repository,
+		jobQueue:          jobQueue,
+		idGenerator:       idGenerator,
+		clock:             clock,
+		lifecycleObserver: lifecycleObserver,
 	}, nil
 }
 
@@ -79,6 +86,7 @@ func (useCase *CreateJob) Execute(
 	if err := useCase.repository.Create(ctx, entity); err != nil {
 		return nil, fmt.Errorf("persist job: %w", err)
 	}
+	useCase.lifecycleObserver.StatusPersisted(ctx, entity, "")
 
 	if err := useCase.jobQueue.Enqueue(ctx, entity.ID()); err != nil {
 		return nil, fmt.Errorf(

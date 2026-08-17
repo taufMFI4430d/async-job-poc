@@ -44,11 +44,14 @@ Driving adapters → application ports and use cases → domain
 Infrastructure adapters ────────────────────────────┘
 ```
 
+The React interface is a driving adapter. It only communicates through the
+public HTTP contract and has no access to domain, repository, or queue internals.
+
 ### End-to-end processing flow
 
 ```mermaid
 flowchart LR
-    Client["Client or minimal UI"]
+    Client["Client or React UI"]
 
     subgraph APIService["API service"]
         HTTP["HTTP adapter"]
@@ -136,6 +139,7 @@ A job receives one initial processing attempt and up to three retry attempts. A 
 
 | Component | Responsibility |
 |---|---|
+| React UI | Submit supported payloads and poll persisted status through the API. |
 | API | Validate requests, create jobs, enqueue IDs, and return persisted status. |
 | MySQL | Store the authoritative job record and its complete lifecycle. |
 | Redis | Buffer pending job IDs between the API and worker service. |
@@ -147,6 +151,30 @@ A job receives one initial processing attempt and up to three retry attempts. A 
 
 ## Project structure
 
+```text
+.
+├── cmd/
+│   ├── api/                    # API composition root
+│   └── worker/                 # Worker composition root
+├── internal/
+│   ├── domain/job/             # Job entity, types, states, and retry rules
+│   ├── application/
+│   │   ├── ports/              # Repository, queue, executor, and observer contracts
+│   │   └── usecase/            # Create, retrieve, and process job orchestration
+│   ├── adapters/
+│   │   ├── http/               # API handlers, request IDs, and React asset serving
+│   │   ├── mysql/              # GORM repository adapter
+│   │   ├── redis/              # Redis list queue adapter
+│   │   ├── executor/           # Simulated job-type handlers
+│   │   └── worker/             # Dispatcher and five-worker channel pool
+│   └── platform/               # Configuration, logging, DB, cache, clock, server
+├── web/                        # React/Vite interface and UI tests
+├── migrations/                 # Ordered MySQL schema migrations
+├── scripts/                    # Live lifecycle verification
+├── Dockerfile                  # Reproducible UI, API, and worker build stages
+└── docker-compose.yml          # Complete local runtime
+```
+
 ## Prerequisites
 
 - Go `1.24.10` or the version declared in `go.mod`.
@@ -154,6 +182,7 @@ A job receives one initial processing attempt and up to three retry attempts. A 
 - Docker Compose.
 - `curl` for command-line API checks.
 - `make` for the provided developer commands.
+- Node.js `24+` and npm only when developing the React UI outside Docker.
 
 The Makefile defaults to the standalone `docker-compose` command. If your environment provides the Docker Compose plugin instead, pass it explicitly:
 
@@ -182,6 +211,9 @@ make ps
 ```
 
 The API, worker, MySQL, and Redis should be running. The migration container is expected to finish successfully and exit with status code `0`.
+
+Open the job console at [http://localhost:8080](http://localhost:8080). Select a
+job type, edit its payload, submit it, and watch the status update automatically.
 
 Check API liveness and infrastructure readiness:
 
@@ -220,13 +252,124 @@ make check
 make test-integration
 ```
 
+Verify a complete successful lifecycle and a failed lifecycle with three retries:
+
+```bash
+make lifecycle-check
+```
+
+The check submits real jobs, polls the status endpoint, and verifies the terminal
+status fields. Run it while the complete Docker stack is healthy.
+
 Stop the containers without deleting the persisted MySQL and Redis volumes:
 
 ```bash
 make down
 ```
 
+## Observability
+
+The API returns an `X-Request-ID` header for every request. A valid client-supplied
+ID is preserved; otherwise, the API creates one. API logs include that ID so a
+submission or status lookup can be followed without exposing internal errors.
+
+Job lifecycle logs are structured JSON and consistently include `job_id`,
+`job_type`, `job_status`, `retry_count`, and `max_retries`. Every persisted state
+change also records `previous_status` and `new_status`, making pending, processing,
+retry, success, and terminal-failure transitions searchable in container logs.
+
+```bash
+make logs
+make worker-logs
+```
+
 ## API
+
+All API responses use JSON. The API accepts or generates an `X-Request-ID` and
+returns it in the response headers.
+
+### Create a job
+
+`POST /api/v1/jobs` persists a pending job, enqueues its ID, and returns `202 Accepted`.
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/jobs \
+  -H 'Content-Type: application/json' \
+  -H 'X-Request-ID: demo-create-report' \
+  -d '{
+    "type": "report_generation",
+    "payload": {
+      "report": "monthly-summary",
+      "format": "pdf"
+    }
+  }'
+```
+
+```json
+{
+  "id": "6d3d991b-8270-4ea3-8e5c-8e8d692d6c5e",
+  "type": "report_generation",
+  "status": "pending",
+  "payload": {"report":"monthly-summary","format":"pdf"},
+  "retry_count": 0,
+  "max_retries": 3,
+  "last_error": null,
+  "created_at": "2026-08-17T04:09:20Z",
+  "updated_at": "2026-08-17T04:09:20Z",
+  "started_at": null,
+  "completed_at": null
+}
+```
+
+Valid handler payloads:
+
+| Type | Required payload |
+|---|---|
+| `send_email` | `to` as an email address, non-empty `subject`, and non-empty `body` |
+| `report_generation` | non-empty `report` and `format` of `pdf`, `csv`, or `json` |
+| `data_cleanup` | non-empty `scope` and `older_than_days` from `1` to `3650` |
+
+### Get job status
+
+`GET /api/v1/jobs/{jobID}` returns the latest MySQL state.
+
+```bash
+curl -i http://localhost:8080/api/v1/jobs/6d3d991b-8270-4ea3-8e5c-8e8d692d6c5e
+```
+
+The endpoint returns `200` for an existing job, `400` for an invalid UUID, and
+`404` when a valid UUID does not exist.
+
+### Health endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health/live` | Confirms the API process is serving requests. |
+| `GET /health/ready` | Confirms MySQL and Redis are reachable. |
+
+API errors use a stable envelope and do not expose internal infrastructure details:
+
+```json
+{"error":{"code":"job_not_found","message":"job was not found"}}
+```
+
+## React interface
+
+The UI supports all three job types, client-side payload constraints, an existing
+job-ID lookup, automatic one-second status polling, retry counters, lifecycle
+timestamps, and terminal error display. Production assets are compiled in the
+Docker build and served by the Go API, so the complete POC remains a single-origin
+application.
+
+For local UI development, keep the API running and use:
+
+```bash
+make ui-install
+make ui-dev
+```
+
+Vite serves the development UI at `http://localhost:5173` and proxies API and
+health requests to `http://localhost:8080`.
 
 ## Job model
 
@@ -275,6 +418,7 @@ Configuration is loaded from environment variables at process startup. Both the 
 | `LOG_LEVEL` | No | `info` | Structured log level: `debug`, `info`, `warn`, or `error`. |
 | `HTTP_ADDRESS` | No | `:8080` | Address on which the API listens inside its runtime. |
 | `API_HOST_PORT` | No | `8080` | API port published on the host by Docker Compose. |
+| `UI_ASSETS_DIR` | No | `web/dist` | Compiled React asset directory read by the API. |
 | `MYSQL_HOST` | Yes | — | MySQL hostname; `mysql` inside Docker. |
 | `MYSQL_PORT` | No | `3306` | MySQL port used by the application. |
 | `MYSQL_HOST_PORT` | No | `3306` | MySQL port published on the host. |
@@ -290,3 +434,27 @@ Configuration is loaded from environment variables at process startup. Both the 
 | `REDIS_QUEUE_NAME` | No | `jobs:pending` | Redis list used for pending job IDs. |
 
 Do not commit `.env` or real credentials. Use `.env.example` as the safe configuration template.
+
+## Testing and demo preparation
+
+The test suite covers domain transitions, retry exhaustion, application use cases,
+HTTP contracts, UI asset serving, request correlation, job handlers, worker-pool
+behavior, React API calls, and UI submission behavior.
+
+```bash
+make check             # Go tests/vet, UI tests/build, formatting, Compose validation
+make test-integration  # Real MySQL and Redis adapter tests
+make lifecycle-check   # Live UI, success path, three retries, and terminal failure
+```
+
+A concise demo flow is:
+
+1. Run `make up`, then open `http://localhost:8080` and `make worker-logs`.
+2. Submit a valid report job and show `pending → processing → success` in the UI and logs.
+3. Run `make lifecycle-check` to demonstrate the successful path and retry exhaustion.
+4. Query the failed job through the UI to show `retry_count`, `last_error`, and timestamps.
+5. Use `make ps` to show the API, worker, MySQL, and Redis container health.
+
+The API and worker images run as an unprivileged user with read-only filesystems,
+temporary in-memory `/tmp` storage, bounded Docker logs, and graceful shutdown
+periods. MySQL and Redis data remain in named volumes across normal restarts.

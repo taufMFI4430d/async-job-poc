@@ -69,6 +69,12 @@ func TestJobHandlerCreateReturnsAcceptedJob(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("expected status %d, got %d", http.StatusAccepted, response.Code)
 	}
+	if response.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Fatalf(
+			"expected JSON Content-Type, got %q",
+			response.Header().Get("Content-Type"),
+		)
+	}
 
 	expectedLocation := "/api/v1/jobs/" + handlerTestJobID
 	if response.Header().Get("Location") != expectedLocation {
@@ -191,6 +197,69 @@ func TestJobHandlerGetReturnsPersistedJob(t *testing.T) {
 	if body["id"] != handlerTestJobID {
 		t.Errorf("expected job ID %q, got %v", handlerTestJobID, body["id"])
 	}
+}
+
+func TestJobHandlerGetReturnsCompleteFailedStatus(t *testing.T) {
+	createdAt := time.Date(2026, time.August, 3, 15, 0, 0, 0, time.UTC)
+	startedAt := createdAt.Add(time.Minute)
+	completedAt := startedAt.Add(time.Minute)
+	lastError := "email provider unavailable"
+
+	entity, err := job.Restore(job.RestoreParams{
+		ID:          job.ID(handlerTestJobID),
+		Type:        job.TypeSendEmail,
+		Status:      job.StatusFailed,
+		Payload:     json.RawMessage(`{"to":"learner@example.com"}`),
+		RetryCount:  job.DefaultMaxRetries,
+		MaxRetries:  job.DefaultMaxRetries,
+		LastError:   &lastError,
+		CreatedAt:   createdAt,
+		UpdatedAt:   completedAt,
+		StartedAt:   &startedAt,
+		CompletedAt: &completedAt,
+	})
+	if err != nil {
+		t.Fatalf("restore failed test job: %v", err)
+	}
+
+	jobHandler := newTestJobHandler(
+		t,
+		createJobExecutorStub{execute: unexpectedCreateCall(t)},
+		successfulGetExecutor(entity),
+	)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+handlerTestJobID, nil)
+	request.SetPathValue("jobID", handlerTestJobID)
+	response := httptest.NewRecorder()
+	jobHandler.GetByID(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+
+	var body jobResponseSnapshot
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Status != job.StatusFailed.String() ||
+		body.RetryCount != job.DefaultMaxRetries ||
+		body.MaxRetries != job.DefaultMaxRetries {
+		t.Fatalf("unexpected failed status response: %+v", body)
+	}
+	if body.LastError == nil || *body.LastError != lastError {
+		t.Fatalf("expected last_error %q, got %v", lastError, body.LastError)
+	}
+	if body.StartedAt == nil || body.CompletedAt == nil {
+		t.Fatalf("expected lifecycle timestamps, got %+v", body)
+	}
+}
+
+type jobResponseSnapshot struct {
+	Status      string     `json:"status"`
+	RetryCount  int        `json:"retry_count"`
+	MaxRetries  int        `json:"max_retries"`
+	LastError   *string    `json:"last_error"`
+	StartedAt   *time.Time `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at"`
 }
 
 func TestJobHandlerGetMapsNotFoundError(t *testing.T) {

@@ -14,6 +14,8 @@ import (
 	"github.com/taufMFI4430d/async-job-poc/internal/application/ports"
 	"github.com/taufMFI4430d/async-job-poc/internal/application/usecase"
 	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
+	platformlogging "github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
+	"github.com/taufMFI4430d/async-job-poc/internal/platform/requestid"
 )
 
 const maxCreateJobBodyBytes = 1 << 20
@@ -81,6 +83,12 @@ func (handler *JobHandler) Create(
 ) {
 	requestBody, requestError := decodeCreateJobRequest(writer, request)
 	if requestError != nil {
+		handler.logger.Warn(
+			"job request rejected",
+			platformlogging.RequestIDAttribute(requestid.FromContext(request.Context())),
+			slog.String("operation", "create_job"),
+			slog.String("error_code", requestError.code),
+		)
 		writeAPIError(
 			writer,
 			requestError.status,
@@ -98,9 +106,20 @@ func (handler *JobHandler) Create(
 		},
 	)
 	if err != nil {
-		handler.writeApplicationError(writer, "create_job", err)
+		handler.writeApplicationError(request.Context(), writer, "create_job", err)
 		return
 	}
+
+	attributes := platformlogging.JobAttributes(entity)
+	attributes = append(attributes,
+		platformlogging.RequestIDAttribute(requestid.FromContext(request.Context())),
+	)
+	handler.logger.LogAttrs(
+		request.Context(),
+		slog.LevelInfo,
+		"job accepted",
+		attributes...,
+	)
 
 	writer.Header().Set(
 		"Location",
@@ -118,9 +137,20 @@ func (handler *JobHandler) GetByID(
 		usecase.GetJobInput{ID: request.PathValue("jobID")},
 	)
 	if err != nil {
-		handler.writeApplicationError(writer, "get_job", err)
+		handler.writeApplicationError(request.Context(), writer, "get_job", err)
 		return
 	}
+
+	attributes := platformlogging.JobAttributes(entity)
+	attributes = append(attributes,
+		platformlogging.RequestIDAttribute(requestid.FromContext(request.Context())),
+	)
+	handler.logger.LogAttrs(
+		request.Context(),
+		slog.LevelInfo,
+		"job status returned",
+		attributes...,
+	)
 
 	writeJSON(writer, http.StatusOK, jobResponseFromDomain(entity))
 }
@@ -192,6 +222,7 @@ func decodeCreateJobRequest(
 }
 
 func (handler *JobHandler) writeApplicationError(
+	ctx context.Context,
 	writer http.ResponseWriter,
 	operation string,
 	err error,
@@ -233,10 +264,13 @@ func (handler *JobHandler) writeApplicationError(
 			"job already exists",
 		)
 	case errors.Is(err, ports.ErrJobQueueUnavailable):
-		handler.logger.Error(
+		handler.logger.LogAttrs(
+			ctx,
+			slog.LevelError,
 			"job could not be published to Redis",
 			slog.String("operation", operation),
-			slog.Any("error", err),
+			platformlogging.RequestIDAttribute(requestid.FromContext(ctx)),
+			platformlogging.ErrorAttribute(err),
 		)
 
 		writeAPIError(
@@ -246,10 +280,13 @@ func (handler *JobHandler) writeApplicationError(
 			"job queue is temporarily unavailable",
 		)
 	default:
-		handler.logger.Error(
+		handler.logger.LogAttrs(
+			ctx,
+			slog.LevelError,
 			"job request failed",
 			slog.String("operation", operation),
-			slog.Any("error", err),
+			platformlogging.RequestIDAttribute(requestid.FromContext(ctx)),
+			platformlogging.ErrorAttribute(err),
 		)
 		writeAPIError(
 			writer,

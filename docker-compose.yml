@@ -64,18 +64,32 @@ services:
       mysql:
         condition: service_healthy
     restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        APP_NAME : api
+      target: api
     restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       HTTP_ADDRESS: ":8080"
+      UI_ASSETS_DIR: "/app/web/dist"
 
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -116,9 +130,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        APP_NAME: worker
+      target: worker
     restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}

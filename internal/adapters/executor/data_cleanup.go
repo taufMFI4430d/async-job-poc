@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
+	platformlogging "github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
 )
 
 const (
@@ -76,14 +77,21 @@ func (handler *DataCleanupHandler) Handle(
 		)
 	}
 
-	handler.logger.Info(
-		"data cleanup started",
-		slog.String("job_id", entity.ID().String()),
+	attributes := platformlogging.JobAttributes(entity)
+	attributes = append(
+		attributes,
 		slog.String("scope", payload.Scope),
 		slog.Int(
 			"older_than_days",
 			payload.OlderThanDays,
 		),
+	)
+
+	handler.logger.LogAttrs(
+		ctx,
+		slog.LevelInfo,
+		"data cleanup started",
+		attributes...,
 	)
 
 	timer := time.NewTimer(handler.processingDuration)
@@ -98,17 +106,11 @@ func (handler *DataCleanupHandler) Handle(
 		)
 
 	case <-timer.C:
-		handler.logger.Info(
+		handler.logger.LogAttrs(
+			ctx,
+			slog.LevelInfo,
 			"data cleanup completed",
-			slog.String(
-				"job_id",
-				entity.ID().String(),
-			),
-			slog.String("scope", payload.Scope),
-			slog.Int(
-				"older_than_days",
-				payload.OlderThanDays,
-			),
+			attributes...,
 		)
 
 		return nil

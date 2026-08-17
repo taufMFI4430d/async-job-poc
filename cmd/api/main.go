@@ -142,11 +142,21 @@ func run() int {
 		return 1
 	}
 
+	lifecycleObserver, err := logging.NewJobLifecycleObserver(logger)
+	if err != nil {
+		logger.Error(
+			"failed to initialize job lifecycle observer",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
 	createJob, err := usecase.NewCreateJob(
 		jobRepository,
 		jobQueue,
 		idgen.NewUUIDGenerator(),
 		clock.NewSystemClock(),
+		lifecycleObserver,
 	)
 	if err != nil {
 		logger.Error(
@@ -174,8 +184,21 @@ func run() int {
 		return 1
 	}
 
+	uiHandler, err := httpadapter.NewUIHandler(
+		os.DirFS(cfg.UI.AssetsDirectory),
+	)
+	if err != nil {
+		logger.Error(
+			"failed to initialize UI handler",
+			slog.String("assets_directory", cfg.UI.AssetsDirectory),
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
 	router := httpadapter.NewRouter(
 		jobHandler,
+		uiHandler,
 		mysqlDB,
 		redisConnection,
 	)

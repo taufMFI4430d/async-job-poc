@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -217,12 +218,14 @@ func TestProcessJobPersistsProcessingAndSuccess(t *testing.T) {
 			return nil
 		},
 	}
+	lifecycleObserver := &lifecycleObserverStub{}
 
 	processJob, err := usecase.NewProcessJob(
 		repository,
 		&jobQueueStub{},
 		executor,
 		clockStub{now: fixedTime},
+		lifecycleObserver,
 	)
 	if err != nil {
 		t.Fatalf("create ProcessJob use case: %v", err)
@@ -268,6 +271,18 @@ func TestProcessJobPersistsProcessingAndSuccess(t *testing.T) {
 		t.Fatalf(
 			"expected final status success, got %s",
 			entity.Status(),
+		)
+	}
+
+	expectedTransitions := []lifecycleTransition{
+		{previous: job.StatusPending, current: job.StatusProcessing},
+		{previous: job.StatusProcessing, current: job.StatusSuccess},
+	}
+	if !reflect.DeepEqual(lifecycleObserver.transitions, expectedTransitions) {
+		t.Fatalf(
+			"expected lifecycle transitions %#v, got %#v",
+			expectedTransitions,
+			lifecycleObserver.transitions,
 		)
 	}
 }

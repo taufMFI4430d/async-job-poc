@@ -68,6 +68,26 @@ type clockStub struct {
 	now time.Time
 }
 
+type lifecycleTransition struct {
+	previous job.Status
+	current  job.Status
+}
+
+type lifecycleObserverStub struct {
+	transitions []lifecycleTransition
+}
+
+func (observer *lifecycleObserverStub) StatusPersisted(
+	_ context.Context,
+	entity *job.Job,
+	previousStatus job.Status,
+) {
+	observer.transitions = append(observer.transitions, lifecycleTransition{
+		previous: previousStatus,
+		current:  entity.Status(),
+	})
+}
+
 func (clock clockStub) Now() time.Time {
 	return clock.now
 }
@@ -105,12 +125,14 @@ func TestCreateJobPersistsPendingJob(t *testing.T) {
 	}
 
 	jobQueue := &jobQueueStub{}
+	lifecycleObserver := &lifecycleObserverStub{}
 
 	createJob, err := usecase.NewCreateJob(
 		repository,
 		jobQueue,
 		idGenerator,
 		clockStub{now: fixedTime},
+		lifecycleObserver,
 	)
 	if err != nil {
 		t.Fatalf("NewCreateJob() returned an unexpected error: %v", err)
@@ -161,6 +183,21 @@ func TestCreateJobPersistsPendingJob(t *testing.T) {
 			"expected queued ID %q, got %q",
 			created.ID(),
 			jobQueue.jobID,
+		)
+	}
+
+	if len(lifecycleObserver.transitions) != 1 {
+		t.Fatalf(
+			"expected one lifecycle transition, got %d",
+			len(lifecycleObserver.transitions),
+		)
+	}
+	transition := lifecycleObserver.transitions[0]
+	if transition.previous != "" || transition.current != job.StatusPending {
+		t.Fatalf(
+			"expected initial transition none -> pending, got %q -> %q",
+			transition.previous,
+			transition.current,
 		)
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/taufMFI4430d/async-job-poc/internal/application/ports"
 	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
+	platformlogging "github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
 )
 
 const dispatcherRetryDelay = time.Second
@@ -62,9 +63,11 @@ func (dispatcher *Dispatcher) Run(
 				return nil
 			}
 
-			dispatcher.logger.Error(
+			dispatcher.logger.LogAttrs(
+				ctx,
+				slog.LevelError,
 				"failed to dequeue job",
-				slog.Any("error", err),
+				platformlogging.ErrorAttribute(err),
 			)
 
 			if err := waitBeforeNextDequeue(ctx); err != nil {
@@ -74,9 +77,11 @@ func (dispatcher *Dispatcher) Run(
 			continue
 		}
 
-		dispatcher.logger.Info(
+		dispatcher.logger.LogAttrs(
+			ctx,
+			slog.LevelInfo,
 			"job dequeued from Redis",
-			slog.String("job_id", jobID.String()),
+			platformlogging.JobIDAttribute(jobID),
 		)
 
 		select {

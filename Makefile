@@ -2,8 +2,9 @@ SHELL := /bin/sh
 
 COMPOSE ?= docker-compose
 GO ?= go
+NPM ?= npm
 
-.PHONY: help up down build ps logs api-logs run test test-cover test-integration fmt fmt-check vet check compose-config migrate-up migrate-down migrate-status mysql redis \
+.PHONY: help up down build ps logs api-logs run test test-cover test-integration fmt fmt-check vet check compose-config migrate-up migrate-down migrate-status mysql redis lifecycle-check ui-install ui-dev ui-build ui-test ui-check \
 	docker-up docker-down docker-logs docker-ps \
 	test-integration test-integration-mysql test-integration-redis \
 	queue-list queue-length
@@ -12,9 +13,9 @@ help:
 	@echo "Available commands:"
 	@echo "  make up                Build and start the complete Docker stack"
 	@echo "  make down              Stop the stack without deleting data"
-	@echo "  make build             Build the API Docker image"
+	@echo "  make build             Build the API and worker Docker images"
 	@echo "  make ps                Show container and health status"
-	@echo "  make logs              Follow API, MySQL, and Redis logs"
+	@echo "  make logs              Follow API, worker, MySQL, and Redis logs"
 	@echo "  make api-logs          Follow API logs only"
 	@echo "  make run               Run the API locally against Docker services"
 	@echo "  make test              Run unit tests"
@@ -36,6 +37,12 @@ help:
 	@echo "  make queue-length           Show number of queued jobs"
 	@echo "  make worker-logs            Follow worker logs only"
 	@echo "  make run-worker             Run one worker locally"
+	@echo "  make lifecycle-check        Verify success, retries, and terminal failure"
+	@echo "  make ui-install             Install locked React dependencies"
+	@echo "  make ui-dev                 Run the Vite development server"
+	@echo "  make ui-build               Build production UI assets"
+	@echo "  make ui-test                Run UI tests"
+	@echo "  make ui-check               Test and build the UI"
 
 up:
 	$(COMPOSE) up -d --build
@@ -44,10 +51,13 @@ down:
 	$(COMPOSE) down
 
 build:
-	$(COMPOSE) build api
+	$(COMPOSE) build api worker
 
 ps:
 	$(COMPOSE) ps
+
+logs:
+	$(COMPOSE) logs -f api worker mysql redis
 
 worker-logs:
 	$(COMPOSE) logs -f worker
@@ -64,7 +74,7 @@ run-worker:
 api-logs:
 	$(COMPOSE) logs -f api
 
-run:
+run: ui-build
 	@test -f .env || (echo ".env is missing; copy .env.example to .env first" && exit 1)
 	@set -a; . ./.env; set +a; \
 		MYSQL_HOST=127.0.0.1 \
@@ -112,6 +122,24 @@ queue-length:
 		-n "$${REDIS_DB:-0}" \
 		LLEN "$${REDIS_QUEUE_NAME:-jobs:pending}"
 
+lifecycle-check:
+	sh scripts/verify-lifecycle.sh
+
+ui-install:
+	cd web && $(NPM) ci
+
+ui-dev: ui-install
+	cd web && $(NPM) run dev
+
+ui-build: ui-install
+	cd web && $(NPM) run build
+
+ui-test: ui-install
+	cd web && $(NPM) run test
+
+ui-check: ui-install
+	cd web && $(NPM) run check
+
 fmt:
 	gofmt -w cmd internal
 
@@ -129,7 +157,7 @@ vet:
 compose-config:
 	$(COMPOSE) config --quiet
 
-check: fmt-check test vet compose-config
+check: fmt-check test ui-check vet compose-config
 
 migrate-up:
 	$(COMPOSE) run --rm migrate

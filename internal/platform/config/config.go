@@ -12,6 +12,7 @@ import (
 const (
 	defaultAppEnvironment = "development"
 	defaultHTTPAddress    = ":8080"
+	defaultUIAssetsDir    = "web/dist"
 	defaultLogLevel       = "info"
 	defaultMySQLPort      = 3306
 	defaultRedisPort      = 6379
@@ -22,6 +23,7 @@ const (
 type Config struct {
 	App   AppConfig
 	HTTP  HTTPConfig
+	UI    UIConfig
 	MySQL MySQLConfig
 	Redis RedisConfig
 	Log   LogConfig
@@ -33,6 +35,10 @@ type AppConfig struct {
 
 type HTTPConfig struct {
 	Address string
+}
+
+type UIConfig struct {
+	AssetsDirectory string
 }
 
 type MySQLConfig struct {
@@ -82,6 +88,12 @@ func Load() (Config, error) {
 			Address: valueOrDefault(
 				"HTTP_ADDRESS",
 				defaultHTTPAddress,
+			),
+		},
+		UI: UIConfig{
+			AssetsDirectory: valueOrDefault(
+				"UI_ASSETS_DIR",
+				defaultUIAssetsDir,
 			),
 		},
 		MySQL: MySQLConfig{
@@ -160,6 +172,13 @@ func (cfg Config) Validate() error {
 
 	if err := validateHTTPAddress(cfg.HTTP.Address); err != nil {
 		validationErrors = append(validationErrors, err)
+	}
+
+	if strings.TrimSpace(cfg.UI.AssetsDirectory) == "" {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf("UI_ASSETS_DIR is required"),
+		)
 	}
 
 	if !isSupportedEnvironment(cfg.App.Environment) {

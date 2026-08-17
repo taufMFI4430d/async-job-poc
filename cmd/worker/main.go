@@ -149,6 +149,15 @@ func run() int {
 		return 1
 	}
 
+	lifecycleObserver, err := logging.NewJobLifecycleObserver(logger)
+	if err != nil {
+		logger.Error(
+			"failed to initialize job lifecycle observer",
+			slog.Any("error", err),
+		)
+		return 1
+	}
+
 	sendEmailHandler, err :=
 		executoradapter.NewSendEmailHandler(
 			handlerProcessingDuration,
@@ -210,6 +219,7 @@ func run() int {
 		jobQueue,
 		jobExecutor,
 		clock.NewSystemClock(),
+		lifecycleObserver,
 	)
 	if err != nil {
 		logger.Error(

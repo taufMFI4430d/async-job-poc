@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
+	platformlogging "github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
 )
 
 const maximumReportNameLength = 100
@@ -73,11 +74,18 @@ func (handler *ReportGenerationHandler) Handle(
 		)
 	}
 
-	handler.logger.Info(
-		"report generation started",
-		slog.String("job_id", entity.ID().String()),
+	attributes := platformlogging.JobAttributes(entity)
+	attributes = append(
+		attributes,
 		slog.String("report", payload.Report),
 		slog.String("format", payload.Format),
+	)
+
+	handler.logger.LogAttrs(
+		ctx,
+		slog.LevelInfo,
+		"report generation started",
+		attributes...,
 	)
 
 	timer := time.NewTimer(handler.processingDuration)
@@ -92,14 +100,11 @@ func (handler *ReportGenerationHandler) Handle(
 		)
 
 	case <-timer.C:
-		handler.logger.Info(
+		handler.logger.LogAttrs(
+			ctx,
+			slog.LevelInfo,
 			"report generation completed",
-			slog.String(
-				"job_id",
-				entity.ID().String(),
-			),
-			slog.String("report", payload.Report),
-			slog.String("format", payload.Format),
+			attributes...,
 		)
 
 		return nil

@@ -33,7 +33,7 @@ func writeJSON(
 	status int,
 	response any,
 ) {
-
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.WriteHeader(status)
 
 	// A failure here usually means the client disconnected.

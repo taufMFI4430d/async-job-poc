@@ -7,6 +7,7 @@ import (
 
 	"github.com/taufMFI4430d/async-job-poc/internal/application/usecase"
 	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
+	platformlogging "github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
 )
 
 // ProcessorWorker receives job IDs from the internal jobs channel.
@@ -81,9 +82,11 @@ func (worker *ProcessorWorker) Run(
 				return nil
 			}
 
-			logger.Info(
+			logger.LogAttrs(
+				ctx,
+				slog.LevelInfo,
 				"job processing started",
-				slog.String("job_id", jobID.String()),
+				platformlogging.JobIDAttribute(jobID),
 			)
 
 			if err := worker.processor.Execute(ctx, jobID); err != nil {
@@ -92,36 +95,33 @@ func (worker *ProcessorWorker) Run(
 					err,
 					usecase.ErrJobRetryScheduled,
 				):
-					logger.Warn(
+					logger.LogAttrs(
+						ctx,
+						slog.LevelWarn,
 						"job retry scheduled",
-						slog.String(
-							"job_id",
-							jobID.String(),
-						),
-						slog.Any("error", err),
+						platformlogging.JobIDAttribute(jobID),
+						platformlogging.ErrorAttribute(err),
 					)
 
 				case errors.Is(
 					err,
 					usecase.ErrJobRetriesExhausted,
 				):
-					logger.Error(
+					logger.LogAttrs(
+						ctx,
+						slog.LevelError,
 						"job retries exhausted",
-						slog.String(
-							"job_id",
-							jobID.String(),
-						),
-						slog.Any("error", err),
+						platformlogging.JobIDAttribute(jobID),
+						platformlogging.ErrorAttribute(err),
 					)
 
 				default:
-					logger.Error(
+					logger.LogAttrs(
+						ctx,
+						slog.LevelError,
 						"job processing failed",
-						slog.String(
-							"job_id",
-							jobID.String(),
-						),
-						slog.Any("error", err),
+						platformlogging.JobIDAttribute(jobID),
+						platformlogging.ErrorAttribute(err),
 					)
 				}
 
@@ -135,9 +135,11 @@ func (worker *ProcessorWorker) Run(
 				continue
 			}
 
-			logger.Info(
+			logger.LogAttrs(
+				ctx,
+				slog.LevelInfo,
 				"job processing completed",
-				slog.String("job_id", jobID.String()),
+				platformlogging.JobIDAttribute(jobID),
 			)
 		}
 	}

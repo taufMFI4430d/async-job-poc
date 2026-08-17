@@ -29,6 +29,93 @@ func newRetryTestJob(
 	return entity
 }
 
+func verifyRetryableFailure(
+	t *testing.T,
+	entity *job.Job,
+	attempt int,
+	outcome job.FailureOutcome,
+) {
+	t.Helper()
+
+	if outcome != job.FailureOutcomeRetryScheduled {
+		t.Fatalf(
+			"attempt %d: expected retry outcome, got %s",
+			attempt,
+			outcome,
+		)
+	}
+
+	if entity.Status() != job.StatusPending {
+		t.Fatalf(
+			"attempt %d: expected pending status, got %s",
+			attempt,
+			entity.Status(),
+		)
+	}
+
+	if entity.RetryCount() != attempt {
+		t.Fatalf(
+			"attempt %d: expected retry count %d, got %d",
+			attempt,
+			attempt,
+			entity.RetryCount(),
+		)
+	}
+
+	if _, exists := entity.CompletedAt(); exists {
+		t.Fatalf(
+			"attempt %d: retryable job must not be completed",
+			attempt,
+		)
+	}
+}
+
+func verifyTerminalFailure(
+	t *testing.T,
+	entity *job.Job,
+	outcome job.FailureOutcome,
+	eventTime time.Time,
+) {
+	t.Helper()
+
+	if outcome != job.FailureOutcomeTerminalFailure {
+		t.Fatalf(
+			"expected terminal outcome, got %s",
+			outcome,
+		)
+	}
+
+	if entity.Status() != job.StatusFailed {
+		t.Fatalf(
+			"expected failed status, got %s",
+			entity.Status(),
+		)
+	}
+
+	if entity.RetryCount() != job.DefaultMaxRetries {
+		t.Fatalf(
+			"expected retry count %d, got %d",
+			job.DefaultMaxRetries,
+			entity.RetryCount(),
+		)
+	}
+
+	completedAt, exists := entity.CompletedAt()
+	if !exists {
+		t.Fatal(
+			"terminally failed job must have completed_at",
+		)
+	}
+
+	if !completedAt.Equal(eventTime) {
+		t.Fatalf(
+			"expected completed_at %v, got %v",
+			eventTime,
+			completedAt,
+		)
+	}
+}
+
 func TestRecordFailureSchedulesThreeRetriesThenFails(
 	t *testing.T,
 ) {
@@ -74,77 +161,11 @@ func TestRecordFailureSchedulesThreeRetriesThenFails(
 		}
 
 		if attempt <= job.DefaultMaxRetries {
-			if outcome != job.FailureOutcomeRetryScheduled {
-				t.Fatalf(
-					"attempt %d: expected retry outcome, got %s",
-					attempt,
-					outcome,
-				)
-			}
-
-			if entity.Status() != job.StatusPending {
-				t.Fatalf(
-					"attempt %d: expected pending status, got %s",
-					attempt,
-					entity.Status(),
-				)
-			}
-
-			if entity.RetryCount() != attempt {
-				t.Fatalf(
-					"attempt %d: expected retry count %d, got %d",
-					attempt,
-					attempt,
-					entity.RetryCount(),
-				)
-			}
-
-			if _, exists := entity.CompletedAt(); exists {
-				t.Fatalf(
-					"attempt %d: retryable job must not be completed",
-					attempt,
-				)
-			}
-
+			verifyRetryableFailure(t, entity, attempt, outcome)
 			continue
 		}
 
-		if outcome != job.FailureOutcomeTerminalFailure {
-			t.Fatalf(
-				"expected terminal outcome, got %s",
-				outcome,
-			)
-		}
-
-		if entity.Status() != job.StatusFailed {
-			t.Fatalf(
-				"expected failed status, got %s",
-				entity.Status(),
-			)
-		}
-
-		if entity.RetryCount() != job.DefaultMaxRetries {
-			t.Fatalf(
-				"expected retry count %d, got %d",
-				job.DefaultMaxRetries,
-				entity.RetryCount(),
-			)
-		}
-
-		completedAt, exists := entity.CompletedAt()
-		if !exists {
-			t.Fatal(
-				"terminally failed job must have completed_at",
-			)
-		}
-
-		if !completedAt.Equal(eventTime) {
-			t.Fatalf(
-				"expected completed_at %v, got %v",
-				eventTime,
-				completedAt,
-			)
-		}
+		verifyTerminalFailure(t, entity, outcome, eventTime)
 	}
 
 	lastError, exists := entity.LastError()

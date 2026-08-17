@@ -8,6 +8,9 @@
 bin/
 tmp/
 coverage/
+graphify-out/
+web/node_modules/
+web/dist/
 *.out
 *.test
 

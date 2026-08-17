@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/taufMFI4430d/async-job-poc/internal/domain/job"
+	platformlogging "github.com/taufMFI4430d/async-job-poc/internal/platform/logging"
 )
 
 const maximumEmailSubjectLength = 200
@@ -75,10 +76,17 @@ func (handler *SendEmailHandler) Handle(
 		)
 	}
 
-	handler.logger.Info(
-		"email delivery started",
-		slog.String("job_id", entity.ID().String()),
+	attributes := platformlogging.JobAttributes(entity)
+	attributes = append(
+		attributes,
 		slog.String("recipient", payload.To),
+	)
+
+	handler.logger.LogAttrs(
+		ctx,
+		slog.LevelInfo,
+		"email delivery started",
+		attributes...,
 	)
 
 	timer := time.NewTimer(handler.processingDuration)
@@ -93,13 +101,11 @@ func (handler *SendEmailHandler) Handle(
 		)
 
 	case <-timer.C:
-		handler.logger.Info(
+		handler.logger.LogAttrs(
+			ctx,
+			slog.LevelInfo,
 			"email delivery completed",
-			slog.String(
-				"job_id",
-				entity.ID().String(),
-			),
-			slog.String("recipient", payload.To),
+			attributes...,
 		)
 
 		return nil

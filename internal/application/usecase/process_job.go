@@ -20,10 +20,11 @@ var (
 )
 
 type ProcessJob struct {
-	repository ports.JobRepository
-	jobQueue   ports.JobQueue
-	executor   ports.JobExecutor
-	clock      ports.Clock
+	repository        ports.JobRepository
+	jobQueue          ports.JobQueue
+	executor          ports.JobExecutor
+	clock             ports.Clock
+	lifecycleObserver ports.JobLifecycleObserver
 }
 
 func NewProcessJob(
@@ -31,6 +32,7 @@ func NewProcessJob(
 	jobQueue ports.JobQueue,
 	executor ports.JobExecutor,
 	clock ports.Clock,
+	lifecycleObservers ...ports.JobLifecycleObserver,
 ) (*ProcessJob, error) {
 	if repository == nil {
 		return nil, errors.New(
@@ -55,12 +57,17 @@ func NewProcessJob(
 			"clock must not be nil",
 		)
 	}
+	lifecycleObserver, err := resolveLifecycleObserver(lifecycleObservers)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ProcessJob{
-		repository: repository,
-		jobQueue:   jobQueue,
-		executor:   executor,
-		clock:      clock,
+		repository:        repository,
+		jobQueue:          jobQueue,
+		executor:          executor,
+		clock:             clock,
+		lifecycleObserver: lifecycleObserver,
 	}, nil
 }
 
@@ -88,6 +95,7 @@ func (useCase *ProcessJob) Execute(
 		)
 	}
 
+	previousStatus := entity.Status()
 	if err := entity.MarkProcessing(
 		useCase.clock.Now(),
 	); err != nil {
@@ -108,6 +116,7 @@ func (useCase *ProcessJob) Execute(
 			err,
 		)
 	}
+	useCase.lifecycleObserver.StatusPersisted(ctx, entity, previousStatus)
 
 	if err := useCase.executor.Execute(
 		ctx,
@@ -120,6 +129,7 @@ func (useCase *ProcessJob) Execute(
 		)
 	}
 
+	previousStatus = entity.Status()
 	if err := entity.MarkSuccess(
 		useCase.clock.Now(),
 	); err != nil {
@@ -140,6 +150,7 @@ func (useCase *ProcessJob) Execute(
 			err,
 		)
 	}
+	useCase.lifecycleObserver.StatusPersisted(ctx, entity, previousStatus)
 
 	return nil
 }
@@ -150,6 +161,7 @@ func (useCase *ProcessJob) handleExecutionFailure(
 	executionError error,
 ) error {
 	jobID := entity.ID()
+	previousStatus := entity.Status()
 
 	outcome, err := entity.RecordFailure(
 		useCase.clock.Now(),
@@ -189,6 +201,7 @@ func (useCase *ProcessJob) handleExecutionFailure(
 			),
 		)
 	}
+	useCase.lifecycleObserver.StatusPersisted(ctx, entity, previousStatus)
 
 	switch outcome {
 	case job.FailureOutcomeRetryScheduled:
